@@ -1,15 +1,14 @@
-import os
-
-PYCDF_PATH = "/Applications/cdf/cdf38_1-dist"
-os.environ["CDF_LIB"] = PYCDF_PATH
-
-import argparse
+import os, glob
 from spacepy import pycdf
 import numpy as np
-import glob
 from tqdm import tqdm
 
 def fillValue(array, windowSize, threshold):
+    ### fill the value with the average of legal values besides
+    ### when the value is missing (or exceeded the legal range)
+    ### array: the array which'll be operated
+    ### windowSize: range of besides shold be consider
+    ### threshold: 
     for row in tqdm(range(len(array))):
         for col in range(len(array[row])):
             if array[row][col] < threshold:
@@ -31,11 +30,17 @@ def fillValue(array, windowSize, threshold):
 
 
 def preprocessing(folderSet, keySet, storeFolder, year, windowSize, threshold):
-    
-    ret = []
+    ### concatenate and clean up the data
+    ### folderSet: the list of folder which contain the files to be concatenated
+    ### keySet: specify the critical data we want to remain
+    ### storeFolder: the concatenated files will be stored here
+    ### year: specify the specific year files to be concatenate
+    ### windowSize: refer to fillValue()
+    ### threshold: refer to fillValue()
+
     for folder, keys in zip(folderSet, keySet):
         files = sorted(glob.glob(os.path.join(folder, "*_"+str(year) + '*.cdf')))
-        # mainList = []
+
         for key in keys:
             subList = []
         
@@ -47,14 +52,13 @@ def preprocessing(folderSet, keySet, storeFolder, year, windowSize, threshold):
                 except Exception as e:
                     print(f"error key {e}")
                     break
-        
+
             subList = np.concatenate(subList, axis = 0)
+            np.save(os.path.join(storeFolder, str(year) + "-mag-" + key + ".npy"), subList, allow_pickle=True, fix_imports=True)
             if key == 'B1GSE' or key == 'BGSE':
                 subList = fillValue(subList.transpose(), windowSize, threshold)
-            np.save(os.path.join(storeFolder, str(year) + key + ".npy"), subList, allow_pickle=True, fix_imports=True)
+            np.save(os.path.join(storeFolder, "filled-"+ str(year) + "-mag-" + key + ".npy"), subList, allow_pickle=True, fix_imports=True)
             del subList
-            # mainList.append(subList)
-        # ret.append(mainList)
 
 
 if __name__ == "__main__":
@@ -74,10 +78,9 @@ if __name__ == "__main__":
     windowSize = 10
     threshold = -1000000
 
-    # start_year = 2021
-    # end_year = 2021
+    start_year = 2021
+    end_year = 2021
 
-    # for year in range(start_year, end_year+1):
+    for year in range(start_year, end_year+1):
 
-    year = 2021
-    preprocessing(folderSet, keySet, storeFolder, year, windowSize, threshold)
+        preprocessing(folderSet, keySet, storeFolder, year, windowSize, threshold)

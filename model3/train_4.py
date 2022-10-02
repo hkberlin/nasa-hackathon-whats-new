@@ -8,16 +8,14 @@ import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 import numpy as np
 import torch
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.utils.data import random_split
 import logging
 import dataset
 from model import *
-from utils import R2_score
-
-
-
+from utils import *
 
 def main(args):
 
@@ -27,7 +25,7 @@ def main(args):
 	logger = get_loggings(args.ckpt_dir)
 
 	# dataset, split
-	d = dataset.DSCOVRMagneticFieldToWindProtonDataset(args.data_path, args.start_year, args.end_year)
+	d = dataset.WindProtonDatasetToDST(args.data_path, args.start_year, args.end_year)
 	logger.info(f"Dataset length: {len(d)}")
 	data_num = len(d)
 	train_ratio, valid_ratio, test_ratio = 0.7, 0.2, 0.1
@@ -42,26 +40,29 @@ def main(args):
 	valid_loader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=False)
 	test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
-	model_args = {"input_dim": 3, "hidden_dim": args.hidden_dim, "output_dim": 3, "num_layers": args.num_layers}
-	model = Seq2Val(**model_args).to(args.device)
+	model_args = {"input_dim": 3, "hidden_dim": args.hidden_dim, "output_dim": 1, "num_layers": args.num_layers}
+	model = Val2Val(**model_args).to(args.device)
 	logger.info(model)
 
 	# init optimizer
 	optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 	scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.5, patience=10, min_lr=5e-5)
-	criterion = torch.nn.MSELoss()
+	# criterion = torch.nn.MSELoss()
+	# criterion = torch.nn.BCELoss()
 	best_eval_loss = np.inf
 
 	for epoch in range(1, args.num_epoch+1):
 		# Training loop - iterate over train dataloader and update model weights
 		model.train()
 		loss_train, acc_train, iter_train = 0, 0, 0
-		for x, y in train_loader:
-			x, y = x.to(args.device), y.to(args.device)
-			outputs = model(x)
+		for x_prime, dst in train_loader:
+			x_prime, dst = x_prime.to(args.device), dst.to(args.device)
+			outputs = model(x_prime)
 
 			# calculate loss and update parameters
-			loss = criterion(outputs, y)
+			# loss = criterion(outputs, dst)
+			weight = torch.where(dst==1, 20., 1.)
+			loss = F.binary_cross_entropy(outputs, dst, weight)
 			optimizer.zero_grad()
 			loss.backward()
 			optimizer.step()
@@ -69,7 +70,7 @@ def main(args):
 			# accumulate loss, accuracy
 			iter_train += 1
 			loss_train += loss.item()
-			acc_train += R2_score(outputs, y)
+			acc_train += cls_accuracy(outputs, dst)
 		
 		loss_train /= iter_train
 		acc_train /= iter_train
@@ -78,17 +79,19 @@ def main(args):
 		model.eval()
 		with torch.no_grad():
 			loss_eval, acc_eval, iter_eval = 0, 0, 0
-			for x, y in valid_loader:
-				x, y = x.to(args.device), y.to(args.device)
-				outputs = model(x)
+			for x_prime, dst in valid_loader:
+				x_prime, dst = x_prime.to(args.device), dst.to(args.device)
+				outputs = model(x_prime)
 
 				# calculate loss and update parameters
-				loss = criterion(outputs, y)
+				# loss = criterion(outputs, dst)
+				weight = torch.where(dst==1, 20., 1.)
+				loss = F.binary_cross_entropy(outputs, dst, weight)
 
 				# accumulate loss, accuracy
 				iter_eval += 1
 				loss_eval += loss.item()
-				acc_eval += R2_score(outputs, y)
+				acc_eval += cls_accuracy(outputs, dst)
 			
 			loss_eval /= iter_eval
 			acc_eval /= iter_eval
@@ -105,55 +108,36 @@ def main(args):
 
 	# Inference on test set
 	# first load-in best model
-	model = Seq2Val(**model_args).to(args.device)
+	model = Val2Val(**model_args).to(args.device)
 	model.load_state_dict(torch.load(os.path.join(args.ckpt_dir, "model.pt")))
 	model.eval()
 	with torch.no_grad():
-		loss_test, acc_test, iter_test = 0, 0, 0
-		for x, y in test_loader:
-			x, y = x.to(args.device), y.to(args.device)
-			outputs = model(x)
+		loss_test, acc_test, prec_test, recall_test, iter_test = 0, 0, 0, 0, 0 
+		for x_prime, dst in test_loader:
+			x_prime, dst = x_prime.to(args.device), dst.to(args.device)
+			outputs = model(x_prime)
 
 			# calculate loss and update parameters
-			loss = criterion(outputs, y)
+			# loss = criterion(outputs, dst)
+			weight = torch.where(dst==1, 20., 1.)
+			loss = F.binary_cross_entropy(outputs, dst, weight)
 
 			# accumulate loss, accuracy
 			iter_test += 1
 			loss_test += loss.item()
-			acc_test += R2_score(outputs, y)
+			acc_test += cls_accuracy(outputs, dst)
 		
+			p, r =  cls_metrics(outputs, dst)
+			prec_test += p
+			recall_test += r
+
 		loss_test /= iter_test
 		acc_test /= iter_test
+		prec_test /= iter_test
+		recall_test /= iter_test
 
 	logger.info("-----------------------------------------------")
-	logger.info(f"Test, test_acc: {acc_test:.4f}, test_loss: {loss_test:.4f}")
-
-	# visualize
-	visualize_path = os.path.join(args.ckpt_dir, "visualize")
-	if not os.path.exists(visualize_path):
-		os.mkdir(visualize_path)
-	with torch.no_grad():
-		predictions = torch.tensor([]).to(args.device)
-		for x, y in test_loader:
-			x, y = x.to(args.device), y.to(args.device)
-			middle_point = x.shape[1] // 2
-			view_size = x.shape[1] // 2
-			for timestep in range(0, middle_point):
-				x_input = x[:, timestep:min(timestep+view_size, x.shape[1]), :]
-				y_output = model(x_input).unsqueeze(1)
-				predictions = torch.cat([predictions, y_output], dim=1)
-			print(y.shape)
-			print()
-
-
-
-		for x, y in test_loader:
-			x, y = x.to(args.device), y.to(args.device)
-			outputs = model(x)
-			for index in range(20):
-				visualize_test(x[index, :, :], y[index, :, :], outputs[index, :, :], visualize_path, index)
-			break
-
+	logger.info(f"Test, test_acc: {acc_test:.4f}, test_prec: {prec_test:.4f}, test_recall: {recall_test:.4f}, test_loss: {loss_test:.4f}")
 		
 
 
@@ -163,42 +147,42 @@ def parse_args() -> Namespace:
 		"--data_path",
 		type=Path,
 		help="Directory to the dataset.",
-		default="./Data/processed/",
+		default="./Data/processed-date/",
 	)
 
 	parser.add_argument(
 		"--ckpt_dir",
 		type=Path,
 		help="Directory to save the model file.",
-		default="./Results/",
+		default="./Results",
 	)
 
 	# year
-	parser.add_argument("--start_year", type=int, default=2016)
-	parser.add_argument("--end_year", type=int, default=2018)
+	parser.add_argument("--start_year", type=int, default=2015)
+	parser.add_argument("--end_year", type=int, default=2016)
 
 	# model
 	parser.add_argument("--hidden_dim", type=int, default=128)
-	parser.add_argument("--num_layers", type=int, default=2)
+	parser.add_argument("--num_layers", type=int, default=3)
 
 	# optimizer
 	parser.add_argument("--lr", type=float, default=1e-3)
 
 	# data loader
-	parser.add_argument("--batch_size", type=int, default=128)
+	parser.add_argument("--batch_size", type=int, default=256)
 
 	# training
 	parser.add_argument(
 		"--device", type=torch.device, help="cpu, cuda, cuda:0, cuda:1", default="cuda"
 	)
-	parser.add_argument("--num_epoch", type=int, default=300)
+	parser.add_argument("--num_epoch", type=int, default=1000)
 
 	args = parser.parse_args()
 	return args
 
 
 def get_loggings(ckpt_dir):
-	logger = logging.getLogger(name='TASK1-Seq2Val')
+	logger = logging.getLogger(name='TASK1-Val2Val')
 	logger.setLevel(level=logging.INFO)
 	# set formatter
 	formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
