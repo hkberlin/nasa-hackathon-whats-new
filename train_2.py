@@ -14,7 +14,7 @@ from torch.utils.data import random_split
 import logging
 import dataset
 from model import *
-from utils import R2_score
+from utils import R2_score, visualize_seq2seq
 
 
 
@@ -127,6 +127,19 @@ def main(args):
 
 	logger.info("-----------------------------------------------")
 	logger.info(f"Test, test_acc: {acc_test:.4f}, test_loss: {loss_test:.4f}")
+
+	# visualize
+	visualize_path = os.path.join(args.ckpt_dir, "visualize")
+	if not os.path.exists(visualize_path):
+		os.mkdir(visualize_path)
+	with torch.no_grad():
+		for x_prime, x in test_loader:
+			x_prime, x = x_prime.to(args.device), x.to(args.device)
+			outputs = model(x_prime)
+			for index in range(20):
+				visualize_seq2seq(x[index, :, :], x_prime[index, :, :], outputs[index, :, :], visualize_path, index)
+			break
+
 		
 
 
@@ -147,8 +160,8 @@ def parse_args() -> Namespace:
 	)
 
 	# year
-	parser.add_argument("--start_year", type=int, default=2017)
-	parser.add_argument("--end_year", type=int, default=2017)
+	parser.add_argument("--start_year", type=int, default=2015)
+	parser.add_argument("--end_year", type=int, default=2016)
 
 	# model
 	parser.add_argument("--hidden_dim", type=int, default=128)
@@ -158,11 +171,11 @@ def parse_args() -> Namespace:
 	parser.add_argument("--lr", type=float, default=1e-3)
 
 	# data loader
-	parser.add_argument("--batch_size", type=int, default=64)
+	parser.add_argument("--batch_size", type=int, default=256)
 
 	# training
 	parser.add_argument(
-		"--device", type=torch.device, help="cpu, cuda, cuda:0, cuda:1", default="cpu"
+		"--device", type=torch.device, help="cpu, cuda, cuda:0, cuda:1", default="cuda"
 	)
 	parser.add_argument("--num_epoch", type=int, default=100)
 
@@ -171,7 +184,7 @@ def parse_args() -> Namespace:
 
 
 def get_loggings(ckpt_dir):
-	logger = logging.getLogger(name='TASK1-Seq2Val')
+	logger = logging.getLogger(name='TASK1-Seq2Seq')
 	logger.setLevel(level=logging.INFO)
 	# set formatter
 	formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')

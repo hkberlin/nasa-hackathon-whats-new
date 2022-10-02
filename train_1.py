@@ -55,35 +55,27 @@ def main(args):
 	for epoch in range(1, args.num_epoch+1):
 		# Training loop - iterate over train dataloader and update model weights
 		model.train()
-		print("aaa")
 		loss_train, acc_train, iter_train = 0, 0, 0
 		for x, y in train_loader:
 			x, y = x.to(args.device), y.to(args.device)
 			outputs = model(x)
 
 			# calculate loss and update parameters
-			print(outputs.shape, y.shape)
 			loss = criterion(outputs, y)
-			print(loss)
 			optimizer.zero_grad()
-			print("222")
 			loss.backward()
-			print("333")
 			optimizer.step()
-			print("444")
 
 			# accumulate loss, accuracy
 			iter_train += 1
 			loss_train += loss.item()
 			acc_train += R2_score(outputs, y)
 		
-		print("iiii")
 		loss_train /= iter_train
 		acc_train /= iter_train
 
 		# Evaluation loop - calculate accuracy and save model weights
 		model.eval()
-		print("bbb")
 		with torch.no_grad():
 			loss_eval, acc_eval, iter_eval = 0, 0, 0
 			for x, y in valid_loader:
@@ -135,6 +127,33 @@ def main(args):
 
 	logger.info("-----------------------------------------------")
 	logger.info(f"Test, test_acc: {acc_test:.4f}, test_loss: {loss_test:.4f}")
+
+	# visualize
+	visualize_path = os.path.join(args.ckpt_dir, "visualize")
+	if not os.path.exists(visualize_path):
+		os.mkdir(visualize_path)
+	with torch.no_grad():
+		predictions = torch.tensor([]).to(args.device)
+		for x, y in test_loader:
+			x, y = x.to(args.device), y.to(args.device)
+			middle_point = x.shape[1] // 2
+			view_size = x.shape[1] // 2
+			for timestep in range(0, middle_point):
+				x_input = x[:, timestep:min(timestep+view_size, x.shape[1]), :]
+				y_output = model(x_input).unsqueeze(1)
+				predictions = torch.cat([predictions, y_output], dim=1)
+			print(y.shape)
+			print()
+
+
+
+		for x, y in test_loader:
+			x, y = x.to(args.device), y.to(args.device)
+			outputs = model(x)
+			for index in range(20):
+				visualize_test(x[index, :, :], y[index, :, :], outputs[index, :, :], visualize_path, index)
+			break
+
 		
 
 
@@ -155,8 +174,8 @@ def parse_args() -> Namespace:
 	)
 
 	# year
-	parser.add_argument("--start_year", type=int, default=2017)
-	parser.add_argument("--end_year", type=int, default=2017)
+	parser.add_argument("--start_year", type=int, default=2016)
+	parser.add_argument("--end_year", type=int, default=2018)
 
 	# model
 	parser.add_argument("--hidden_dim", type=int, default=128)
@@ -166,13 +185,13 @@ def parse_args() -> Namespace:
 	parser.add_argument("--lr", type=float, default=1e-3)
 
 	# data loader
-	parser.add_argument("--batch_size", type=int, default=64)
+	parser.add_argument("--batch_size", type=int, default=128)
 
 	# training
 	parser.add_argument(
-		"--device", type=torch.device, help="cpu, cuda, cuda:0, cuda:1", default="cpu"
+		"--device", type=torch.device, help="cpu, cuda, cuda:0, cuda:1", default="cuda"
 	)
-	parser.add_argument("--num_epoch", type=int, default=100)
+	parser.add_argument("--num_epoch", type=int, default=300)
 
 	args = parser.parse_args()
 	return args

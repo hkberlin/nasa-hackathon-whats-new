@@ -38,7 +38,7 @@ class DSCOVRMagneticFieldToWindMagneticField(Dataset):
         # x_prime: [bs, seq_len, 3]
         # x: [bs, seq_len, 3]
         for year in range(start_year, end_year+1):
-            year_data = torch.load(os.path.join(data_path, f"data_{year}.pt"))
+            year_data = torch.load(os.path.join(data_path, f"all_data_{year}.pt"))
             self.x_prime = torch.cat([self.x_prime, year_data["X"].float()], dim=0)
             self.x = torch.cat([self.x, year_data["xx"].float()], dim=0)
         print("total x_prime shape:", self.x_prime.shape)
